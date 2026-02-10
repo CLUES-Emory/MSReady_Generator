@@ -278,7 +278,7 @@ print(f"Failed to parse: {len(failed)}")
 ## Limitations and Caveats
 
 - **Zwitterions**: Amino acids and other zwitterionic compounds may not neutralize to the expected form in all cases, as the "neutral" form is pH-dependent. The pipeline produces the fully protonated/deprotonated uncharged form.
-- **Metallic complexes**: Organometallic compounds or metal chelates may not desalt correctly if the metal is part of the active structure rather than a counterion.
+- **Metallic complexes**: Compounds containing transition metals (e.g., Vitamin B12/Co, hematin/Fe, zinc pyrithione/Zn) are automatically detected and **skipped** — the pipeline returns the original structure with properties calculated on the unmodified molecule and flags it with `"SKIPPED: Contains transition metal (...); manual review recommended"`. This prevents the metal center from being incorrectly stripped as a counterion. Common salt-forming metals (Na, K, Ca, Mg, Al) are not affected and are still removed normally.
 - **Stereochemistry**: The pipeline preserves stereochemistry (E/Z, R/S) from the input SMILES but does not validate or correct it.
 - **Tautomers**: MolVS applies canonical tautomer selection, but the "correct" tautomer can be context-dependent. For sensitive applications, manual review of tautomer-rich compounds (e.g., keto-enol, amide-imidic acid) is recommended.
 - **Multi-component salts**: For 2:1 or 1:2 salt complexes (e.g., calcium salts of diprotic acids), the pipeline selects only one copy of the largest fragment.

@@ -31,6 +31,13 @@ logger = logging.getLogger(__name__)
 
 EXCEL_EXTENSIONS = (".xlsx", ".xls")
 
+TRANSITION_METALS = {
+    "Sc","Ti","V","Cr","Mn","Fe","Co","Ni","Cu","Zn",
+    "Y","Zr","Nb","Mo","Tc","Ru","Rh","Pd","Ag","Cd",
+    "Hf","Ta","W","Re","Os","Ir","Pt","Au","Hg",
+    "La","Ce","Pr","Nd","Sm","Eu","Gd","Tb","Dy",
+}
+
 
 # ── I/O helpers ────────────────────────────────────────────────────────────
 
@@ -84,6 +91,18 @@ def standardize_mol(smiles: str) -> dict:
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
         result["standardization_notes"] = "FAILED: Could not parse SMILES"
+        return result
+
+    # Check for transition metals — skip desalting for organometallics
+    atom_symbols = {atom.GetSymbol() for atom in mol.GetAtoms()}
+    found_metals = atom_symbols & TRANSITION_METALS
+    if found_metals:
+        result["msready_smiles"] = Chem.MolToSmiles(mol, canonical=True)
+        result["msready_inchikey"] = inchi.MolToInchiKey(mol)
+        result["msready_formula"] = rdMolDescriptors.CalcMolFormula(mol)
+        result["msready_exact_mass"] = round(Descriptors.ExactMolWt(mol), 6)
+        result["msready_monoisotopic_mass"] = round(Descriptors.ExactMolWt(mol), 6)
+        result["standardization_notes"] = f"SKIPPED: Contains transition metal ({', '.join(sorted(found_metals))}); manual review recommended"
         return result
 
     try:
