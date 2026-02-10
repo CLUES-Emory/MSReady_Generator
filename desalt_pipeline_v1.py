@@ -67,14 +67,14 @@ def standardize_mol(smiles: str) -> dict:
         4. Neutralize charges
         5. Compute updated properties
     
-    Returns dict with parent SMILES, InChIKey, formula, exact mass, etc.
+    Returns dict with MS-ready SMILES, InChIKey, formula, exact mass, etc.
     """
     result = {
-        "parent_smiles": None,
-        "parent_inchikey": None,
-        "parent_formula": None,
-        "parent_exact_mass": None,
-        "parent_monoisotopic_mass": None,
+        "msready_smiles": None,
+        "msready_inchikey": None,
+        "msready_formula": None,
+        "msready_exact_mass": None,
+        "msready_monoisotopic_mass": None,
         "num_fragments_removed": 0,
         "charge_changed": False,
         "standardization_notes": [],
@@ -118,12 +118,12 @@ def standardize_mol(smiles: str) -> dict:
                 f"Neutralized charge: {original_charge:+d} → {final_charge:+d}"
             )
 
-        # Step 5: Compute properties on parent structure
-        result["parent_smiles"] = Chem.MolToSmiles(mol_neutral, canonical=True)
-        result["parent_inchikey"] = inchi.MolToInchiKey(mol_neutral)
-        result["parent_formula"] = rdMolDescriptors.CalcMolFormula(mol_neutral)
-        result["parent_exact_mass"] = round(Descriptors.ExactMolWt(mol_neutral), 6)
-        result["parent_monoisotopic_mass"] = round(
+        # Step 5: Compute properties on MS-ready structure
+        result["msready_smiles"] = Chem.MolToSmiles(mol_neutral, canonical=True)
+        result["msready_inchikey"] = inchi.MolToInchiKey(mol_neutral)
+        result["msready_formula"] = rdMolDescriptors.CalcMolFormula(mol_neutral)
+        result["msready_exact_mass"] = round(Descriptors.ExactMolWt(mol_neutral), 6)
+        result["msready_monoisotopic_mass"] = round(
             Descriptors.ExactMolWt(mol_neutral), 6
         )
 
@@ -152,7 +152,7 @@ def process_dataframe(
         smiles_col: Name of the column containing SMILES strings
     
     Returns:
-        DataFrame with original columns + new parent structure columns
+        DataFrame with original columns + new MS-ready structure columns
     """
     if smiles_col not in df.columns:
         raise ValueError(
@@ -174,11 +174,11 @@ def process_dataframe(
         if pd.isna(smi) or str(smi).strip() == "":
             results.append(
                 {
-                    "parent_smiles": None,
-                    "parent_inchikey": None,
-                    "parent_formula": None,
-                    "parent_exact_mass": None,
-                    "parent_monoisotopic_mass": None,
+                    "msready_smiles": None,
+                    "msready_inchikey": None,
+                    "msready_formula": None,
+                    "msready_exact_mass": None,
+                    "msready_monoisotopic_mass": None,
                     "num_fragments_removed": 0,
                     "charge_changed": False,
                     "standardization_notes": "FAILED: Empty SMILES",
@@ -190,7 +190,7 @@ def process_dataframe(
         res = standardize_mol(str(smi).strip())
         results.append(res)
 
-        if res["parent_smiles"] is None:
+        if res["msready_smiles"] is None:
             n_failed += 1
         else:
             if res["num_fragments_removed"] > 0:

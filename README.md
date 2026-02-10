@@ -90,8 +90,8 @@ df = pd.read_csv("my_database.csv")
 result = process_dataframe(df, smiles_col="SMILES")
 
 # Inspect results
-print(result[["compound_name", "SMILES", "parent_smiles", "parent_formula", 
-              "parent_exact_mass", "standardization_notes"]])
+print(result[["compound_name", "SMILES", "msready_smiles", "msready_formula", 
+              "msready_exact_mass", "standardization_notes"]])
 
 # Save
 result.to_csv("my_database_desalted.csv", index=False)
@@ -109,11 +109,11 @@ result = standardize_mol("[Na+].CC(C)Cc1ccc(cc1)C(C)C([O-])=O")
 
 print(result)
 # {
-#   'parent_smiles': 'CC(C)Cc1ccc(C(C)C(=O)O)cc1',
-#   'parent_inchikey': 'HEFNNWSXXWATRW-UHFFFAOYSA-N',
-#   'parent_formula': 'C13H18O2',
-#   'parent_exact_mass': 206.13068,
-#   'parent_monoisotopic_mass': 206.13068,
+#   'msready_smiles': 'CC(C)Cc1ccc(C(C)C(=O)O)cc1',
+#   'msready_inchikey': 'HEFNNWSXXWATRW-UHFFFAOYSA-N',
+#   'msready_formula': 'C13H18O2',
+#   'msready_exact_mass': 206.13068,
+#   'msready_monoisotopic_mass': 206.13068,
 #   'num_fragments_removed': 1,
 #   'charge_changed': True,
 #   'standardization_notes': 'Removed 1 salt/fragment(s); Neutralized charge: -1 → +0'
@@ -150,11 +150,11 @@ The pipeline appends these columns to your original data:
 
 | Column | Type | Description |
 |---|---|---|
-| `parent_smiles` | str | Canonical SMILES of the desalted, neutralized parent structure |
-| `parent_inchikey` | str | InChIKey of the parent structure (useful for deduplication) |
-| `parent_formula` | str | Molecular formula of the parent structure |
-| `parent_exact_mass` | float | Exact monoisotopic mass of the parent (Da) |
-| `parent_monoisotopic_mass` | float | Monoisotopic mass (same as exact mass; included for compatibility) |
+| `msready_smiles` | str | Canonical SMILES of the desalted, neutralized MS-ready structure |
+| `msready_inchikey` | str | InChIKey of the MS-ready structure (useful for deduplication) |
+| `msready_formula` | str | Molecular formula of the MS-ready structure |
+| `msready_exact_mass` | float | Exact monoisotopic mass of the MS-ready structure (Da) |
+| `msready_monoisotopic_mass` | float | Monoisotopic mass (same as exact mass; included for compatibility) |
 | `num_fragments_removed` | int | Number of salt/counterion fragments stripped |
 | `charge_changed` | bool | Whether formal charge was neutralized |
 | `standardization_notes` | str | Human-readable log of all transformations applied |
@@ -246,10 +246,10 @@ output.to_csv("large_database_desalted.csv", index=False)
 # for matching against experimental m/z features
 result = process_dataframe(df, smiles_col="SMILES")
 
-# Use parent_exact_mass for [M+H]+ matching
-result["mz_MpH"] = result["parent_exact_mass"] + 1.007276
-result["mz_MmH"] = result["parent_exact_mass"] - 1.007276
-result["mz_MpNa"] = result["parent_exact_mass"] + 22.989218
+# Use msready_exact_mass for [M+H]+ matching
+result["mz_MpH"] = result["msready_exact_mass"] + 1.007276
+result["mz_MmH"] = result["msready_exact_mass"] - 1.007276
+result["mz_MpNa"] = result["msready_exact_mass"] + 22.989218
 ```
 
 ### Deduplicating Across Salt Forms
@@ -257,7 +257,7 @@ result["mz_MpNa"] = result["parent_exact_mass"] + 22.989218
 ```python
 # Multiple salt forms of the same drug collapse to one parent InChIKey
 result = process_dataframe(df, smiles_col="SMILES")
-deduplicated = result.drop_duplicates(subset="parent_inchikey", keep="first")
+deduplicated = result.drop_duplicates(subset="msready_inchikey", keep="first")
 print(f"Reduced {len(result)} entries to {len(deduplicated)} unique parent structures")
 ```
 
@@ -268,7 +268,7 @@ print(f"Reduced {len(result)} entries to {len(deduplicated)} unique parent struc
 result = process_dataframe(df, smiles_col="SMILES")
 salts = result[result["num_fragments_removed"] > 0]
 charged = result[result["charge_changed"] == True]
-failed = result[result["parent_smiles"].isna()]
+failed = result[result["msready_smiles"].isna()]
 
 print(f"Salt forms found: {len(salts)}")
 print(f"Charged species neutralized: {len(charged)}")
