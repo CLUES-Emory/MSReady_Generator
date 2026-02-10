@@ -36,7 +36,7 @@ pip install rdkit molvs pandas openpyxl
 
 ### Option 1: Command Line
 
-Process a CSV, TSV, or Excel file directly from the terminal. Note: Excel files are preferred to avoid encoding and character errors:
+Process a CSV, TSV, or Excel file directly from the terminal. First, download the .py script to the appropiate directory, and update the pathname to where this script is located. Pathnames for input and output files must also be added if nit int he working directory. **Note: Excel files are preferred to avoid encoding and character errors.**
 
 ```bash
 # Basic usage (assumes SMILES column is named "SMILES")
