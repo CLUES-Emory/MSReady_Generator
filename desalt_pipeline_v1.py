@@ -19,7 +19,6 @@ from rdkit import Chem
 from rdkit.Chem import Descriptors, inchi, rdMolDescriptors
 from rdkit.Chem.MolStandardize import rdMolStandardize
 from molvs import Standardizer
-from molvs.fragment import LargestFragmentChooser
 from molvs.charge import Uncharger
 import logging
 import os
@@ -62,6 +61,42 @@ def find_header_row(filepath, target_col):
 
 
 # ── Core standardization functions ──────────────────────────────────────────
+
+def _choose_largest_fragment(mol):
+    """Select the parent fragment from a multi-fragment (salt) molecule.
+
+    Ranks fragments by HEAVY-ATOM count, then prefers a formally positive fragment
+    (keeps quaternary-ammonium actives on a heavy-atom tie, e.g. DADMAC), then exact
+    MW; organic fragments are preferred over inorganic. Returns
+    (parent_mol, ambiguous), where `ambiguous` is True when the top two fragments are
+    within one heavy atom — a near-tie worth flagging for manual review.
+
+    Replaces MolVS/RDKit `LargestFragmentChooser`, whose 'largest' metric counts
+    implicit hydrogens — so an H-rich aliphatic counterion (e.g. the diisopropylamine
+    of a 2,4-D salt: 22 atoms-with-H) wrongly outranks an H-poor halogenated active
+    (2,4-D: 19 atoms-with-H but 13 heavy atoms vs 7). Heavy-atom ranking keeps the
+    active; legitimate desalts (Na/K/Cl/sulfate counterions, etc.) are unaffected.
+    """
+    frags = Chem.GetMolFrags(mol, asMols=True, sanitizeFrags=True)
+    if len(frags) <= 1:
+        return mol, False
+    organic = [f for f in frags if any(a.GetAtomicNum() == 6 for a in f.GetAtoms())]
+    pool = organic or list(frags)
+    ranked = sorted(
+        pool,
+        key=lambda f: (f.GetNumHeavyAtoms(),
+                       1 if Chem.GetFormalCharge(f) > 0 else 0,
+                       Descriptors.ExactMolWt(f)),
+        reverse=True,
+    )
+    top = ranked[0]
+    # Near-tie flag: a *different* fragment within one heavy atom of the chosen one
+    # (ignore identical duplicate fragments, e.g. a di-salt of the same acid).
+    top_smi = Chem.MolToSmiles(top)
+    rivals = [f for f in ranked[1:] if Chem.MolToSmiles(f) != top_smi]
+    ambiguous = bool(rivals) and (top.GetNumHeavyAtoms() - rivals[0].GetNumHeavyAtoms() <= 1)
+    return top, ambiguous
+
 
 def standardize_mol(smiles: str) -> dict:
     """
@@ -113,9 +148,10 @@ def standardize_mol(smiles: str) -> dict:
         # Count fragments before salt removal
         frags_before = len(Chem.GetMolFrags(mol_std))
 
-        # Step 3: Select largest fragment (removes counterions/salts)
-        lfc = LargestFragmentChooser(prefer_organic=True)
-        mol_parent = lfc.choose(mol_std)
+        # Step 3: Select the parent fragment (removes counterions/salts) by
+        # HEAVY-ATOM count — not LargestFragmentChooser, whose implicit-H counting
+        # mis-picks H-rich counterions of H-poor actives (e.g. 2,4-D amine salts).
+        mol_parent, desalt_ambiguous = _choose_largest_fragment(mol_std)
 
         frags_after = len(Chem.GetMolFrags(mol_parent))
         result["num_fragments_removed"] = frags_before - frags_after
@@ -123,6 +159,10 @@ def standardize_mol(smiles: str) -> dict:
         if result["num_fragments_removed"] > 0:
             result["standardization_notes"].append(
                 f"Removed {result['num_fragments_removed']} salt/fragment(s)"
+            )
+        if desalt_ambiguous:
+            result["standardization_notes"].append(
+                "Desalt ambiguous (near-tie fragments) — review"
             )
 
         # Step 4: Neutralize charges

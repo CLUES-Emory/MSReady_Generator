@@ -9,7 +9,7 @@ Mass spectrometry reference databases often contain compounds registered as salt
 The pipeline applies a four-step standardization process to each structure:
 
 1. **Standardize** — Normalize functional group representations and canonical tautomers (e.g., consistent nitro group notation, charge separation patterns)
-2. **Desalt** — Identify and remove counterions by selecting the largest organic fragment (e.g., strip Na⁺, K⁺, Cl⁻, sulfate)
+2. **Desalt** — Identify and remove counterions by selecting the parent fragment by **heavy-atom count** (e.g., strip Na⁺, K⁺, Cl⁻, sulfate); near-ties are flagged for review
 3. **Neutralize** — Remove formal charges where chemically appropriate (e.g., carboxylate⁻ → carboxylic acid, ammonium⁺ → amine)
 4. **Recalculate properties** — Generate canonical SMILES, InChIKey, molecular formula, and exact monoisotopic mass on the parent structure
 
@@ -181,14 +181,26 @@ Applies a series of transformations to normalize chemical representations:
 - Applies canonical tautomer selection
 - Standardizes hypervalent atoms
 
-### Step 2: Largest Fragment Selection
+### Step 2: Parent Fragment Selection
 
-Uses `LargestFragmentChooser` with `prefer_organic=True`:
+Uses `_choose_largest_fragment()` (a heavy-atom-based replacement for
+`LargestFragmentChooser`):
 
 - Splits the molecule at disconnected fragment boundaries (`.` in SMILES)
-- Selects the largest organic fragment by heavy atom count
+- Selects the parent fragment by **heavy-atom count** (tie-breaks: a formally
+  positive fragment, then exact MW); prefers carbon-containing fragments
 - Removes common counterions: Na⁺, K⁺, Ca²⁺, Cl⁻, Br⁻, sulfate, phosphate, etc.
-- Prefers carbon-containing fragments over inorganic ones
+- **Flags near-ties** (top two fragments within one heavy atom) in
+  `standardization_notes` as `Desalt ambiguous (near-tie fragments) — review`
+
+> **Why not `LargestFragmentChooser`?** Its "largest" metric counts implicit
+> hydrogens, so an H-rich aliphatic counterion can outrank an H-poor halogenated
+> active — e.g. for a **2,4-D diisopropylamine salt** it kept the amine
+> (`C6H15N`, 22 atoms-with-H) and dropped 2,4-D (`C8H6Cl2O3`, 13 heavy atoms but
+> only 19 atoms-with-H), giving the wrong MS-ready mass/formula/InChIKey. This hit
+> 2,4-D, 2,4,5-T, MCPA, and similar amine salts. Heavy-atom ranking keeps the
+> active; the formal-charge tie-break keeps small quaternary-ammonium actives
+> (e.g. DADMAC) when fragments tie; legitimate desalts are unchanged.
 
 ### Step 3: Charge Neutralization
 
