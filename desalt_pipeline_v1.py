@@ -98,6 +98,65 @@ def _choose_largest_fragment(mol):
     return top, ambiguous
 
 
+def balance_permanent_cation(mol):
+    """Restore zwitterions that Uncharger leaves at net +1.
+
+    MolVS `Uncharger` neutralizes by adding/removing protons, but a PERMANENT
+    cation (quaternary N+, sulfonium S+, aromatic n+) has no proton to remove. For
+    a zwitterion that has such a cation AND a free carboxylic acid, Uncharger
+    protonates the carboxylate (COO- -> COOH) and the molecule comes out at net +1
+    instead of the correct neutral zwitterion — giving a one-proton-too-high exact
+    mass, a charged formula, and a protonated InChIKey (…-O instead of …-N). This
+    breaks adduct m/z and database matching for carnitine, acylcarnitines, betaines,
+    etc.
+
+    If `mol` is net-positive due to a permanent cation AND has free carboxylic
+    acid group(s), deprotonate one carboxylate per +1 charge to restore the neutral
+    zwitterion. Returns (mol, changed). True cations with no free -COOH
+    (choline, acetylcholine — an ester, thiamine) and neutrals are returned
+    unchanged.
+    """
+    if Chem.GetFormalCharge(mol) <= 0:
+        return mol, False
+    has_permanent_cation = any(
+        atom.GetFormalCharge() > 0 and (
+            # quaternary N+ = 4 HEAVY (non-H) substituents. GetDegree() excludes
+            # implicit/explicit H, so this excludes ammonium (NH4+, degree 0) and
+            # protonated amines (R-NH3+/R2NH2+/R3NH+, degree <4) — both counterions
+            # that Uncharger neutralizes, not permanent cations.
+            (atom.GetAtomicNum() == 7 and atom.GetDegree() == 4) or         # quaternary N+
+            (atom.GetAtomicNum() == 16 and atom.GetFormalCharge() > 0) or   # sulfonium S+
+            (atom.GetAtomicNum() == 7 and atom.GetIsAromatic()             # aromatic n+
+             and atom.GetFormalCharge() > 0)
+        )
+        for atom in mol.GetAtoms()
+    )
+    if not has_permanent_cation:
+        return mol, False
+    matches = mol.GetSubstructMatches(Chem.MolFromSmarts("[CX3](=O)[OX2H1]"))
+    if not matches:                       # no free carboxylate to balance it -> leave as-is
+        return mol, False
+
+    rw = Chem.RWMol(mol)
+    remaining = Chem.GetFormalCharge(mol)
+    for match in matches:
+        if remaining <= 0:
+            break
+        oh = rw.GetAtomWithIdx(match[2])  # the carboxyl -OH oxygen
+        n_h = oh.GetTotalNumHs()
+        if n_h > 0:
+            oh.SetNoImplicit(True)
+            oh.SetNumExplicitHs(n_h - 1)
+            oh.SetFormalCharge(-1)
+            remaining -= 1
+    new_mol = rw.GetMol()
+    try:
+        Chem.SanitizeMol(new_mol)
+    except Exception:
+        return mol, False                 # never emit a broken molecule
+    return new_mol, True
+
+
 def standardize_mol(smiles: str) -> dict:
     """
     Full standardization pipeline for a single SMILES string.
@@ -169,6 +228,15 @@ def standardize_mol(smiles: str) -> dict:
         original_charge = Chem.GetFormalCharge(mol_parent)
         uc = Uncharger()
         mol_neutral = uc.uncharge(mol_parent)
+
+        # Step 4b: Re-balance zwitterions Uncharger left at net +1 (permanent
+        # cation + free carboxylate) so the MS-Ready structure is truly neutral.
+        mol_neutral, zwitterion_fixed = balance_permanent_cation(mol_neutral)
+        if zwitterion_fixed:
+            result["standardization_notes"].append(
+                "Re-balanced permanent-cation zwitterion (restored carboxylate)"
+            )
+
         final_charge = Chem.GetFormalCharge(mol_neutral)
 
         if original_charge != final_charge:
