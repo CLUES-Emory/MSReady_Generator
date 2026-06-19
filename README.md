@@ -6,12 +6,13 @@ A Python pipeline that reads chemical data tables containing SMILES structures a
 
 Mass spectrometry reference databases often contain compounds registered as salt forms (e.g., metformin hydrochloride, ibuprofen sodium, PFOS potassium salt). When matching experimental features to database entries by exact mass or molecular formula, you need the **parent (free base/free acid)** form — not the salt. This pipeline automates that conversion across large compound tables.
 
-The pipeline applies a four-step standardization process to each structure:
+The pipeline applies a five-step standardization process to each structure:
 
 1. **Standardize** — Normalize functional group representations and canonical tautomers (e.g., consistent nitro group notation, charge separation patterns)
 2. **Desalt** — Identify and remove counterions by selecting the parent fragment by **heavy-atom count** (e.g., strip Na⁺, K⁺, Cl⁻, sulfate); near-ties are flagged for review
 3. **Neutralize** — Remove formal charges where chemically appropriate (e.g., carboxylate⁻ → carboxylic acid, ammonium⁺ → amine)
-4. **Recalculate properties** — Generate canonical SMILES, InChIKey, molecular formula, and exact monoisotopic mass on the parent structure
+4. **Re-balance zwitterions** — Restore the neutral zwitterion when neutralization leaves a net‑positive ion. `Uncharger` cannot remove a **permanent** cation (quaternary N⁺, sulfonium, aromatic n⁺), so for compounds that carry one *and* a free carboxylic acid it protonates the carboxylate and the molecule comes out at net **+1** (one proton too heavy, charged formula, protonated InChIKey). This step deprotonates one carboxylate per positive charge to restore the neutral zwitterion — fixing carnitine, acylcarnitines, betaines, etc. True cations with no free carboxylate (choline, acetylcholine, thiamine) are left charged.
+5. **Recalculate properties** — Generate canonical SMILES, InChIKey, molecular formula, and exact monoisotopic mass on the parent structure
 
 ## Requirements
 
