@@ -9,7 +9,7 @@ Mass spectrometry reference databases often contain compounds registered as salt
 The pipeline applies a five-step standardization process to each structure:
 
 1. **Standardize** — Normalize functional group representations and canonical tautomers (e.g., consistent nitro group notation, charge separation patterns)
-2. **Desalt** — Identify and remove counterions by selecting the parent fragment by **heavy-atom count** (e.g., strip Na⁺, K⁺, Cl⁻, sulfate); near-ties are flagged for review
+2. **Desalt** — Identify and remove counterions with **counterion-aware** parent selection: keep a quaternary-ammonium active; otherwise prefer the fragment that is *not* a recognized salt-former (inorganic ion, ammonium, plain alkyl/fatty amine, or tiny acid like acetate), ranked by heavy-atom count. Keeps the active even when the counterion is larger (e.g. 2,4-D · linoleylamine); near-ties are flagged for review
 3. **Neutralize** — Remove formal charges where chemically appropriate (e.g., carboxylate⁻ → carboxylic acid, ammonium⁺ → amine)
 4. **Re-balance zwitterions** — Restore the neutral zwitterion when neutralization leaves a net‑positive ion. `Uncharger` cannot remove a **permanent** cation (quaternary N⁺, sulfonium, aromatic n⁺), so for compounds that carry one *and* a free carboxylic acid it protonates the carboxylate and the molecule comes out at net **+1** (one proton too heavy, charged formula, protonated InChIKey). This step deprotonates one carboxylate per positive charge to restore the neutral zwitterion — fixing carnitine, acylcarnitines, betaines, etc. True cations with no free carboxylate (choline, acetylcholine, thiamine) are left charged.
 5. **Recalculate properties** — Generate canonical SMILES, InChIKey, molecular formula, and exact monoisotopic mass on the parent structure
@@ -184,24 +184,30 @@ Applies a series of transformations to normalize chemical representations:
 
 ### Step 2: Parent Fragment Selection
 
-Uses `_choose_largest_fragment()` (a heavy-atom-based replacement for
+Uses `_choose_parent_fragment()` (a **counterion-aware** replacement for
 `LargestFragmentChooser`):
 
 - Splits the molecule at disconnected fragment boundaries (`.` in SMILES)
-- Selects the parent fragment by **heavy-atom count** (tie-breaks: a formally
-  positive fragment, then exact MW); prefers carbon-containing fragments
-- Removes common counterions: Na⁺, K⁺, Ca²⁺, Cl⁻, Br⁻, sulfate, phosphate, etc.
-- **Flags near-ties** (top two fragments within one heavy atom) in
+- Tiered selection (ranked by heavy-atom count, tie-break exact MW, within a tier):
+  1. a **permanent cation** (quaternary N⁺ / sulfonium / aromatic n⁺) marks a
+     quaternary-ammonium active → keep it (e.g. DADMAC, paraquat);
+  2. otherwise prefer fragments that are **not recognized salt-formers** — inorganic
+     ions, ammonium, plain alkyl/alkanol/fatty amines (only C/H/N/O, aliphatic, an
+     amine, no acid/halogen/aromatic), and tiny acid salt-formers (formate/acetate,
+     ≤2 C);
+  3. fall back to organic / all fragments when every fragment is a counterion (so a
+     fatty-amine acetate correctly keeps the amine)
+- **Flags near-ties** (a different fragment within one heavy atom of the choice) in
   `standardization_notes` as `Desalt ambiguous (near-tie fragments) — review`
 
 > **Why not `LargestFragmentChooser`?** Its "largest" metric counts implicit
-> hydrogens, so an H-rich aliphatic counterion can outrank an H-poor halogenated
-> active — e.g. for a **2,4-D diisopropylamine salt** it kept the amine
-> (`C6H15N`, 22 atoms-with-H) and dropped 2,4-D (`C8H6Cl2O3`, 13 heavy atoms but
-> only 19 atoms-with-H), giving the wrong MS-ready mass/formula/InChIKey. This hit
-> 2,4-D, 2,4,5-T, MCPA, and similar amine salts. Heavy-atom ranking keeps the
-> active; the formal-charge tie-break keeps small quaternary-ammonium actives
-> (e.g. DADMAC) when fragments tie; legitimate desalts are unchanged.
+> hydrogens, so an H-rich aliphatic counterion outranks an H-poor halogenated active
+> (a **2,4-D diisopropylamine salt** kept the amine, `C6H15N`, dropping 2,4-D). And
+> even pure heavy-atom "largest" fails when the counterion is genuinely larger than
+> the active (**2,4-D · linoleylamine**, `C18H35N`). Counterion-aware selection keeps
+> the active in both cases — while still keeping the amine when the amine *is* the
+> active (**abietylamine · acetate**). Legitimate inorganic desalts (Na⁺/K⁺/Cl⁻/
+> sulfate) and quaternary-ammonium actives (paraquat) are unchanged.
 
 ### Step 3: Charge Neutralization
 

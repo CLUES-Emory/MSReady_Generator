@@ -62,33 +62,77 @@ def find_header_row(filepath, target_col):
 
 # ── Core standardization functions ──────────────────────────────────────────
 
-def _choose_largest_fragment(mol):
-    """Select the parent fragment from a multi-fragment (salt) molecule.
+_CARBOXYLATE_ANY = Chem.MolFromSmarts("[CX3](=O)[OX1H0-,OX2H1]")
+_AMINE_BASE = Chem.MolFromSmarts("[NX3;!$(N=*);!$(NC=O);!$(NS(=O)=O)]")
 
-    Ranks fragments by HEAVY-ATOM count, then prefers a formally positive fragment
-    (keeps quaternary-ammonium actives on a heavy-atom tie, e.g. DADMAC), then exact
-    MW; organic fragments are preferred over inorganic. Returns
-    (parent_mol, ambiguous), where `ambiguous` is True when the top two fragments are
-    within one heavy atom — a near-tie worth flagging for manual review.
 
-    Replaces MolVS/RDKit `LargestFragmentChooser`, whose 'largest' metric counts
-    implicit hydrogens — so an H-rich aliphatic counterion (e.g. the diisopropylamine
-    of a 2,4-D salt: 22 atoms-with-H) wrongly outranks an H-poor halogenated active
-    (2,4-D: 19 atoms-with-H but 13 heavy atoms vs 7). Heavy-atom ranking keeps the
-    active; legitimate desalts (Na/K/Cl/sulfate counterions, etc.) are unaffected.
+def _has_permanent_cation(frag):
+    """Quaternary N+ (4 HEAVY substituents — excludes NH4+/protonated amines),
+    sulfonium S+, or aromatic n+ — a charge Uncharger cannot neutralize, marking a
+    quaternary-ammonium active (e.g. DADMAC, paraquat)."""
+    return any(
+        a.GetFormalCharge() > 0 and (
+            (a.GetAtomicNum() == 7 and a.GetDegree() == 4)
+            or (a.GetAtomicNum() == 16 and a.GetFormalCharge() > 0)
+            or (a.GetAtomicNum() == 7 and a.GetIsAromatic() and a.GetFormalCharge() > 0)
+        )
+        for a in frag.GetAtoms()
+    )
+
+
+def _is_counterion(frag):
+    """Recognized salt-former: an inorganic ion (no carbon), a tiny carboxylic-acid
+    salt-former (<=2 C, e.g. formate/acetate), or a plain alkyl/alkanol/fatty amine
+    base (only C/H/N/O, aliphatic, an amine, no acid, no halogen, no aromatic ring)."""
+    nums = [a.GetAtomicNum() for a in frag.GetAtoms()]
+    if 6 not in nums:
+        return True
+    has_acid = frag.HasSubstructMatch(_CARBOXYLATE_ANY)
+    if has_acid and nums.count(6) <= 2:
+        return True
+    if (set(nums) <= {1, 6, 7, 8}
+            and frag.HasSubstructMatch(_AMINE_BASE)
+            and not has_acid
+            and not any(a.GetIsAromatic() for a in frag.GetAtoms())):
+        return True
+    return False
+
+
+def _choose_parent_fragment(mol):
+    """Select the parent (active) fragment of a multi-fragment (salt) molecule —
+    counterion-aware. Returns (parent_mol, ambiguous).
+
+    "Largest fragment" picks the WRONG fragment for two salt classes:
+      1. RDKit/MolVS `LargestFragmentChooser` ranks by atom count INCLUDING implicit
+         hydrogens, so an H-rich amine counterion outranks an H-poor halogenated
+         active (2,4-D diisopropylamine salt -> kept the amine).
+      2. Even pure heavy-atom "largest" fails when the counterion is genuinely larger
+         (2,4-D . linoleylamine, C18H35N, 19 heavy) — yet you can't just "keep the
+         acid": for abietylamine acetate the AMINE is the active and acetate the salt.
+
+    Tiered choice, ranked by heavy-atom count (tie-break exact MW) within a tier:
+      1. a permanent cation (quaternary N+/sulfonium/aromatic n+) marks a QAC active
+         -> keep it;
+      2. else prefer fragments that are NOT recognized counterions (inorganic ions,
+         ammonium, plain alkyl/alkanol/fatty amines, tiny acid salt-formers), so the
+         active is kept regardless of size; fall back to organic / all fragments when
+         every fragment is a counterion (-> fatty-amine acetate keeps the amine).
+
+    `ambiguous` flags a near-tie (a different fragment within one heavy atom of the
+    chosen one) for manual review.
     """
     frags = Chem.GetMolFrags(mol, asMols=True, sanitizeFrags=True)
     if len(frags) <= 1:
         return mol, False
-    organic = [f for f in frags if any(a.GetAtomicNum() == 6 for a in f.GetAtoms())]
-    pool = organic or list(frags)
-    ranked = sorted(
-        pool,
-        key=lambda f: (f.GetNumHeavyAtoms(),
-                       1 if Chem.GetFormalCharge(f) > 0 else 0,
-                       Descriptors.ExactMolWt(f)),
-        reverse=True,
-    )
+    cationic = [f for f in frags if _has_permanent_cation(f)]
+    if cationic:
+        pool = cationic
+    else:
+        non_ct = [f for f in frags if not _is_counterion(f)]
+        organic = [f for f in frags if any(a.GetAtomicNum() == 6 for a in f.GetAtoms())]
+        pool = non_ct or organic or list(frags)
+    ranked = sorted(pool, key=lambda f: (f.GetNumHeavyAtoms(), Descriptors.ExactMolWt(f)),
+                    reverse=True)
     top = ranked[0]
     # Near-tie flag: a *different* fragment within one heavy atom of the chosen one
     # (ignore identical duplicate fragments, e.g. a di-salt of the same acid).
@@ -207,10 +251,11 @@ def standardize_mol(smiles: str) -> dict:
         # Count fragments before salt removal
         frags_before = len(Chem.GetMolFrags(mol_std))
 
-        # Step 3: Select the parent fragment (removes counterions/salts) by
-        # HEAVY-ATOM count — not LargestFragmentChooser, whose implicit-H counting
-        # mis-picks H-rich counterions of H-poor actives (e.g. 2,4-D amine salts).
-        mol_parent, desalt_ambiguous = _choose_largest_fragment(mol_std)
+        # Step 3: Select the parent (active) fragment (removes counterions/salts)
+        # counterion-aware — not LargestFragmentChooser, which mis-picks H-rich amine
+        # counterions of H-poor actives (2,4-D salts) and any counterion larger than
+        # the active (2,4-D . linoleylamine).
+        mol_parent, desalt_ambiguous = _choose_parent_fragment(mol_std)
 
         frags_after = len(Chem.GetMolFrags(mol_parent))
         result["num_fragments_removed"] = frags_before - frags_after
